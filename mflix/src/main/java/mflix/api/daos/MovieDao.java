@@ -46,7 +46,12 @@ public class MovieDao extends AbstractMFlixDao {
         //TODO> Ticket: Handling Errors - implement a way to catch a
         //any potential exceptions thrown while validating a movie id.
         //Check out this method's use in the method that follows.
-        return true;
+        try {
+            return ObjectId.isValid(movieId);
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+        }
+        return false;
     }
 
     /**
@@ -63,13 +68,13 @@ public class MovieDao extends AbstractMFlixDao {
 
         List<Bson> pipeline = new ArrayList<>();
         // match stage to find movie
-        Bson match = Aggregates.match(Filters.eq("_id", new ObjectId(movieId)));
-        pipeline.add(match);
+        pipeline.add(Aggregates.match(Filters.eq("_id", new ObjectId(movieId))));
+        pipeline.add(Aggregates.lookup("comments", Arrays.asList(Aggregates.match(Filters.eq("movie_id", new ObjectId(movieId))), Aggregates.sort(Sorts.descending("date"))), "comments"));
         // TODO> Ticket: Get Comments - implement the lookup stage that allows the comments to
         // retrieved with Movies.
-        Document movie = moviesCollection.aggregate(pipeline).first();
+		Document movie = moviesCollection.aggregate(pipeline).first();
 
-        return movie;
+        return moviesCollection.aggregate(pipeline).first();
     }
 
     /**
@@ -199,7 +204,8 @@ public class MovieDao extends AbstractMFlixDao {
         List<Document> movies = new ArrayList<>();
         // TODO > Ticket: Paging - implement the necessary cursor methods to support simple
         // pagination like skip and limit in the code below
-        moviesCollection.find(castFilter).sort(sort).iterator()
+        //moviesCollection.find(castFilter).sort(sort).iterator()
+		moviesCollection.find(castFilter).sort(sort).skip(skip).limit(limit).iterator()
         .forEachRemaining(movies::add);
         return movies;
     }
@@ -281,6 +287,10 @@ public class MovieDao extends AbstractMFlixDao {
         // Your job is to order the stages correctly in the pipeline.
         // Starting with the `matchStage` add the remaining stages.
         pipeline.add(matchStage);
+		pipeline.add(sortStage);
+		pipeline.add(skipStage);
+		pipeline.add(limitStage);
+		pipeline.add(facetStage);
 
         moviesCollection.aggregate(pipeline).iterator().forEachRemaining(movies::add);
         return movies;

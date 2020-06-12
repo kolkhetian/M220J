@@ -7,10 +7,10 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.model.Aggregates;
 import com.mongodb.client.model.Filters;
-import com.mongodb.client.model.Sorts;
 import com.mongodb.client.model.Updates;
 import com.mongodb.client.result.DeleteResult;
 import com.mongodb.client.result.UpdateResult;
+import com.mongodb.MongoException;
 import mflix.api.models.Comment;
 import mflix.api.models.Critic;
 import org.bson.Document;
@@ -26,11 +26,19 @@ import org.springframework.stereotype.Component;
 
 import java.text.MessageFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
+import java.util.Arrays;
+import java.util.Optional;
+import java.util.Date;
 
 import static org.bson.codecs.configuration.CodecRegistries.fromProviders;
 import static org.bson.codecs.configuration.CodecRegistries.fromRegistries;
+
+import static com.mongodb.client.model.Accumulators.sum;
+import static com.mongodb.client.model.Aggregates.group;
+import static com.mongodb.client.model.Aggregates.limit;
+import static com.mongodb.client.model.Aggregates.sort;
+import static com.mongodb.client.model.Sorts.descending;
 
 @Component
 public class CommentDao extends AbstractMFlixDao {
@@ -81,7 +89,17 @@ public class CommentDao extends AbstractMFlixDao {
         // comment.
         // TODO> Ticket - Handling Errors: Implement a try catch block to
         // handle a potential write exception when given a wrong commentId.
-        return null;
+
+        if (comment.getId() == null || comment.getId().isEmpty()) {
+            throw new IncorrectDaoOperation("Id cannot be null");
+        }
+
+        try {
+            commentCollection.insertOne(comment);
+            return comment;
+        } catch (MongoWriteException e) {
+            throw new IncorrectDaoOperation(e.getMessage());
+        }
     }
 
     /**
@@ -103,7 +121,22 @@ public class CommentDao extends AbstractMFlixDao {
         // user own comments
         // TODO> Ticket - Handling Errors: Implement a try catch block to
         // handle a potential write exception when given a wrong commentId.
-        return false;
+
+        Bson filter = Filters.and(Filters.eq("email", email), Filters.eq("_id", new ObjectId(commentId)));
+        Bson update = Updates.combine(Updates.set("text", text), Updates.set("date", new Date()));
+
+        try {
+
+            UpdateResult result = commentCollection.updateOne(filter, update);
+
+            if (result.getMatchedCount() > 0) {
+                return true;
+            }
+            return false;
+
+        } catch (MongoWriteException e) {
+            throw new IncorrectDaoOperation(e.getMessage());
+        }
     }
 
     /**
@@ -119,7 +152,20 @@ public class CommentDao extends AbstractMFlixDao {
         // TIP: make sure to match only users that own the given commentId
         // TODO> Ticket Handling Errors - Implement a try catch block to
         // handle a potential write exception when given a wrong commentId.
-        return false;
+
+        Bson filter = Filters.and(Filters.eq("_id", new ObjectId(commentId)), Filters.eq("email", email));
+
+        try {
+            DeleteResult result = commentCollection.deleteOne(filter);
+
+            if (result.getDeletedCount() != 1) {
+                return false;
+            }
+            return true;
+
+        } catch (MongoWriteException e) {
+            throw new IncorrectDaoOperation(e.getMessage());
+        }
     }
 
     /**
@@ -137,6 +183,12 @@ public class CommentDao extends AbstractMFlixDao {
         // // guarantee for the returned documents. Once a commenter is in the
         // // top 20 of users, they become a Critic, so mostActive is composed of
         // // Critic objects.
+
+        List<Bson> pipeline = Arrays.asList(
+                group("$email", sum("count", 1L)),
+                sort(descending("count")),
+                limit(20));
+        commentCollection.aggregate(pipeline, Critic.class).iterator().forEachRemaining(mostActive::add);
         return mostActive;
     }
 }
